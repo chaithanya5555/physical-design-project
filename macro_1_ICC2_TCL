@@ -1,0 +1,92 @@
+#library creation
+create_lib -technology ../../ref/tech/saed32nm_1p9m.tf -ref_libs  \
+{../../ref/CLIBs/saed32_1p9m_tech.ndm ../../ref/CLIBs/saed32_hvt.ndm  \
+../../ref/CLIBs/saed32_lvt.ndm ../../ref/CLIBs/saed32_rvt.ndm  \
+../../ref/CLIBs/saed32_sram_lp.ndm} macro_1
+
+#reading netlist and SDC
+read_verilog  ../netlist/macro_1.v
+
+#parasitic reading
+
+read_parasitic_tech -name {new_model} -tlup {../../ref/tech/saed32nm_1p9m_Cmax.lv.tluplus} -layermap  \
+{../../ref/tech/saed32nm_tf_itf_tluplus.map}
+
+get_site_defs
+set_attribute [get_site_defs unit] symmetry Y
+set_attribute [get_site_defs unit] is_default true
+
+
+set_attribute [get_layers {M1 M3 M5 M7}] routing_direction horizontal
+set_attribute [get_layers {M2 M4 M6 M8}] routing_direction vertical
+get_attribute [get_layers M?] routing_direction
+
+report_ignored_layers
+set_ignored_layers -max_routing_layer M8
+report_ignored_layers
+
+#MCMM
+current_corner default
+set_parasitic_parameters -early_spec new_model -late_spec new_model
+set_process_number 0.99 -corners default
+set_temperature 125 -corners default
+set_voltage 0.75 -object_list VDD -corners default
+current_mode default
+read_sdc ../constraints/risc_v.sdc
+set_scenario_status default -active true -setup true -hold true -max_transition true -max_capacitance true -min_capacitance true -leakage_power true  \
+-dynamic_power true
+report_scenarios
+
+
+#UPF
+load_upf ../scripts/router.upf
+commit_upf
+
+check_mv_design
+
+#floor plan
+initialize_floorplan -side_ratio {2 2} -core_offset {10}
+shape_blocks
+set_block_pin_constraints -self -allowed_layers {M3 M4}
+place_pins -self
+
+source -echo ../scripts/pns.tcl
+create_pg_vias -nets {VDD VSS} -from_layers M1 -to_layers M8 -drc no_check
+
+check_pg_connectivity
+check_pg_drc
+check_pg_missing_vias
+
+#placement
+create_placement -floorplan
+place_opt
+
+check_legality
+report_qor -summary
+report_constraints -all_violators
+report_timing
+
+#clock route
+set_app_options -name time.remove_clock_reconvergence_pessimism -value true
+report_clock_settings
+report_qor -summary
+clock_opt
+
+#routing
+#set_routing_rule all -clear -default_rule -min_routing_layer 1 -max_routing_layer 9
+route_auto -max_detail_route_iterations 30
+route_opt
+route_eco
+#signoff_check_drc -auto_eco true
+check_lvs
+save_block
+
+#script writing
+write_script -force -format icc2 -output ../reports/router_spef
+write_parasitics -output ../reports/spef_generation_1
+write_sdf ../results/router_1.sdf
+write_verilog ../results/router_1.v
+write_gds ../results/router_1.gds
+write_sdc -output ../results/router_v.sdc
+
+save_block
